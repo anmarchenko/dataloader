@@ -50,8 +50,12 @@
     "eslint-plugin-prettier": "^3.4.1",
     "flow-bin": "0.112.0",
     "jest": "24.9.0",
+    "jest-circus": "24.9.0",
     "prettier": "^2.8.3",
     "sane": "4.1.0"
+  },
+  "jest": {
+    "testRunner": "jest-circus/runner"
   },
   "publishConfig": {
     "access": "public"

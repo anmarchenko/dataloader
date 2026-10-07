@@ -14,3 +14,4 @@ dist
 index.d.ts
 index.js
 index.js.flow
+.testoptimization/

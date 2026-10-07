@@ -1,0 +1,118 @@
+name: Test Parallelization
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: true
+        type: number
+    secrets:
+      DD_API_KEY:
+        required: true
+      CODECOV_TOKEN:
+        required: false
+
+jobs:
+  plan:
+    name: Plan tests on Node ${{ inputs.node-version }}
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.dd-plan.outputs.matrix }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Use Node ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'yarn'
+
+      - name: Install Dependencies using Yarn
+        run: yarn --ignore-engines
+
+      - name: Lint and Flow check
+        run: yarn lint && yarn check
+
+      - name: Download ddtest
+        run: |
+          mkdir -p bin
+          curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
+          chmod +x bin/ddtest
+
+      - name: Configure Datadog Test Optimization
+        uses: datadog/test-visibility-github-action@v3
+        with:
+          languages: js
+          api_key: ${{ secrets.DD_API_KEY }}
+          site: datadoghq.com
+          js-tracer-version: 5.131.0
+
+      - name: Plan tests
+        id: dd-plan
+        run: |
+          rm -rf .testoptimization
+          bin/ddtest plan --platform javascript --framework jest --command "node_modules/.bin/jest src --coverage" --min-parallelism 1 --max-parallelism 10
+        env:
+          NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}
+
+      - name: Upload test plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: ddtest-plan-node-${{ inputs.node-version }}
+          path: |
+            .testoptimization/
+            bin/ddtest
+          include-hidden-files: true
+          if-no-files-found: error
+
+  test:
+    name: Test Node ${{ inputs.node-version }} (node ${{ matrix.ci_node_index }})
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Use Node ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'yarn'
+
+      - name: Install Dependencies using Yarn
+        run: yarn --ignore-engines
+
+      - name: Download test plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ddtest-plan-node-${{ inputs.node-version }}
+          path: .
+
+      - name: Prepare ddtest
+        run: |
+          test -f .testoptimization/manifest.txt
+          chmod +x bin/ddtest
+
+      - name: Configure Datadog Test Optimization
+        uses: datadog/test-visibility-github-action@v3
+        with:
+          languages: js
+          api_key: ${{ secrets.DD_API_KEY }}
+          site: datadoghq.com
+          js-tracer-version: 5.131.0
+
+      - name: Tests
+        run: bin/ddtest run --platform javascript --framework jest --command "node_modules/.bin/jest src --coverage" --ci-node ${{ matrix.ci_node_index }}
+        env:
+          NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          fail_ci_if_error: true
