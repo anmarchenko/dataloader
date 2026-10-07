@@ -7,25 +7,31 @@
  * @flow
  */
 
-const DataLoader = require('..');
+const { spawnSync } = require('child_process');
+const path = require('path');
 
 describe('Unhandled rejections', () => {
-  it('Not catching a primed error is an unhandled rejection', async () => {
-    let hadUnhandledRejection = false;
-    // Override Jest's unhandled detection
-    global.jasmine.process.removeAllListeners('unhandledRejection');
-    global.jasmine.process.on('unhandledRejection', () => {
-      hadUnhandledRejection = true;
-    });
+  it('Not catching a primed error is an unhandled rejection', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '-r',
+        '@babel/register',
+        '-e',
+        `
+          const DataLoader = require('./src');
+          process.once('unhandledRejection', error => {
+            process.exit(error.message === 'Error: 1' ? 0 : 2);
+          });
+          const identityLoader = new DataLoader(async keys => keys);
+          identityLoader.prime(1, new Error('Error: 1'));
+          identityLoader.load(1);
+          setTimeout(() => process.exit(3), 1000);
+        `,
+      ],
+      { cwd: path.resolve(__dirname, '../..') },
+    );
 
-    const identityLoader = new DataLoader<number, number>(async keys => keys);
-
-    identityLoader.prime(1, new Error('Error: 1'));
-
-    // Ignore result.
-    identityLoader.load(1);
-
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(hadUnhandledRejection).toBe(true);
+    expect(result.status).toBe(0);
   });
 });
